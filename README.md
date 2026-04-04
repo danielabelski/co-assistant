@@ -320,7 +320,10 @@ All configured via `.env` (the setup wizard handles this):
 | `co-assistant start -v` | Start with verbose logging |
 | `co-assistant model` | Show current AI model |
 | `co-assistant model <name>` | Switch AI model |
-| `co-assistant plugin list` | List discovered plugins |
+| `co-assistant plugin list` | List discovered plugins in local `plugins/` |
+| `co-assistant plugin available` | List bundled first-party plugins |
+| `co-assistant plugin install <id>` | Install a bundled plugin into `plugins/` |
+| `co-assistant plugin install --all` | Install all bundled plugins |
 | `co-assistant plugin enable <name>` | Enable a plugin |
 | `co-assistant plugin disable <name>` | Disable a plugin |
 | `co-assistant plugin configure <name>` | Set up plugin credentials |
@@ -384,6 +387,24 @@ Both files are injected as system-level context on every message:
 |--------|---------------|
 | **Gmail** | Search emails, read email, send email, send reply |
 | **Google Calendar** | List events, create event, update event, delete event |
+
+### Install Plugins
+
+Co-Assistant ships with first-party plugins (Gmail, Google Calendar). If you installed via npm, they aren't in your working directory yet — install them with:
+
+```bash
+# See what's available
+co-assistant plugin available
+
+# Install a specific plugin
+co-assistant plugin install gmail
+
+# Install all bundled plugins at once
+co-assistant plugin install --all
+
+# Overwrite an existing plugin (e.g. after an update)
+co-assistant plugin install gmail --force
+```
 
 ### Enable a Plugin
 

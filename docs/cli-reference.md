@@ -132,6 +132,8 @@ co-assistant plugin <subcommand> [args]
 ### Subcommands
 
 - [`plugin list`](#co-assistant-plugin-list)
+- [`plugin available`](#co-assistant-plugin-available)
+- [`plugin install`](#co-assistant-plugin-install)
 - [`plugin enable <id>`](#co-assistant-plugin-enable-id)
 - [`plugin disable <id>`](#co-assistant-plugin-disable-id)
 - [`plugin info <id>`](#co-assistant-plugin-info-id)
@@ -169,6 +171,94 @@ co-assistant plugin list
 
 - Plugins are auto-discovered from the `plugins/` directory.
 - Credential status shows whether all required credentials are configured in `config.json`.
+
+---
+
+### `co-assistant plugin available`
+
+List first-party plugins bundled with the package and show whether each is already installed in your local `plugins/` directory.
+
+#### Syntax
+
+```
+co-assistant plugin available
+```
+
+#### Examples
+
+```bash
+co-assistant plugin available
+```
+
+```
+📦 Available First-Party Plugins:
+
+  gmail (v1.0.0) — Gmail Plugin
+    Send, read, and search Gmail messages via the Gmail API
+    ✅ Installed
+
+  google-calendar (v1.0.0) — Google Calendar Plugin
+    View, create, and manage Google Calendar events
+    ⬇️  Not installed
+
+  Install with: co-assistant plugin install <id>
+  Install all:  co-assistant plugin install --all
+```
+
+#### Notes
+
+- Bundled plugins are resolved from the package's own `plugins/` directory, regardless of how Co-Assistant was installed.
+- "Installed" means the plugin exists in your working directory's `plugins/` folder.
+
+---
+
+### `co-assistant plugin install`
+
+Copy a bundled first-party plugin into your local `plugins/` directory.
+
+#### Syntax
+
+```
+co-assistant plugin install [id] [--all] [--force]
+```
+
+| Argument / Option | Description |
+|-------------------|-------------|
+| `[id]` | Plugin ID to install (omit when using `--all`) |
+| `--all` | Install all available first-party plugins |
+| `--force` | Overwrite plugins that are already installed |
+
+#### Examples
+
+```bash
+# Install a single plugin
+co-assistant plugin install gmail
+```
+
+```
+  ✅ gmail — installed to plugins/gmail/
+
+✓ 1 installed, 0 skipped
+
+Next steps:
+  co-assistant plugin configure <id>   # Set up credentials
+  co-assistant plugin enable <id>      # Enable the plugin
+```
+
+```bash
+# Install all bundled plugins
+co-assistant plugin install --all
+```
+
+```bash
+# Force-overwrite after a package update
+co-assistant plugin install gmail --force
+```
+
+#### Notes
+
+- If a plugin already exists locally and `--force` is not set, it is skipped.
+- After installing, you still need to `enable` and `configure` the plugin before it is active.
 
 ---
 

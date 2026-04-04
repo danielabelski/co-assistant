@@ -1,12 +1,20 @@
 /**
  * @module cli/commands/plugin
  * @description CLI commands for plugin management — list, enable, disable,
- * inspect, and scaffold plugins.
+ * inspect, scaffold, and install first-party plugins.
  */
 
 import { Command } from "commander";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  readdirSync,
+  readFileSync,
+  cpSync,
+} from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createPluginRegistry } from "../../plugins/registry.js";
 import { credentialManager } from "../../plugins/credentials.js";
 import type { PluginManifest } from "../../plugins/types.js";
@@ -14,6 +22,63 @@ import type { PluginManifest } from "../../plugins/types.js";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolve the package's bundled `plugins/` directory.
+ *
+ * Works whether running from source (`src/cli/commands/plugin.ts`) or from
+ * the compiled bundle (`dist/cli/index.js`). The package root is always two
+ * directories up from the CLI entry point, and the bundled first-party
+ * plugins ship inside `plugins/` at that root.
+ */
+function getPackagePluginsDir(): string {
+  const thisFile = fileURLToPath(import.meta.url);
+  // From src/cli/commands/plugin.ts → ../../.. (package root)
+  // From dist/cli/index.js (bundled) → ../.. (package root)
+  // Both resolve correctly because the plugins/ dir is at the package root.
+  const pkgRoot = path.resolve(path.dirname(thisFile), "..", "..", "..");
+  const pluginsDir = path.join(pkgRoot, "plugins");
+
+  // If we're in a bundled dist/ file, the path above overshoots by one level.
+  // Fall back: try two levels up as well.
+  if (!existsSync(pluginsDir)) {
+    const altRoot = path.resolve(path.dirname(thisFile), "..", "..");
+    const altDir = path.join(altRoot, "plugins");
+    if (existsSync(altDir)) return altDir;
+  }
+
+  return pluginsDir;
+}
+
+/**
+ * Discover first-party plugins bundled with the package.
+ *
+ * Reads `plugin.json` from each subdirectory of the package's `plugins/` dir.
+ * Returns an array of manifests with an additional `sourcePath` for copying.
+ */
+function discoverBundledPlugins(): Array<PluginManifest & { sourcePath: string }> {
+  const pkgPluginsDir = getPackagePluginsDir();
+  if (!existsSync(pkgPluginsDir)) return [];
+
+  const entries = readdirSync(pkgPluginsDir, { withFileTypes: true });
+  const results: Array<PluginManifest & { sourcePath: string }> = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const manifestPath = path.join(pkgPluginsDir, entry.name, "plugin.json");
+    if (!existsSync(manifestPath)) continue;
+
+    try {
+      const raw = readFileSync(manifestPath, "utf-8");
+      const manifest = JSON.parse(raw) as PluginManifest;
+      results.push({ ...manifest, sourcePath: path.join(pkgPluginsDir, entry.name) });
+    } catch {
+      // Skip malformed manifests
+    }
+  }
+
+  return results;
+}
 
 /**
  * Create and discover a fresh {@link PluginRegistry}.
@@ -298,13 +363,111 @@ Edit \`tools.ts\` to add or modify the tools this plugin exposes.
   console.log(`✓ Plugin '${pluginId}' scaffolded at plugins/${pluginId}/`);
 }
 
+/**
+ * `plugin available` — List first-party plugins bundled with the package
+ * and show whether each is already installed in the user's working directory.
+ */
+async function handleAvailable(): Promise<void> {
+  const bundled = discoverBundledPlugins();
+
+  if (bundled.length === 0) {
+    console.log("\n📦 No bundled first-party plugins found.\n");
+    return;
+  }
+
+  const localPluginsDir = path.join(process.cwd(), "plugins");
+
+  console.log("\n📦 Available First-Party Plugins:\n");
+
+  for (const plugin of bundled) {
+    const localDir = path.join(localPluginsDir, plugin.id);
+    const installed = existsSync(path.join(localDir, "plugin.json"));
+    const status = installed ? "✅ Installed" : "⬇️  Not installed";
+    console.log(`  ${plugin.id} (v${plugin.version}) — ${plugin.name}`);
+    console.log(`    ${plugin.description}`);
+    console.log(`    ${status}\n`);
+  }
+
+  console.log("  Install with: co-assistant plugin install <id>");
+  console.log("  Install all:  co-assistant plugin install --all\n");
+}
+
+/**
+ * `plugin install <id>` — Copy a first-party plugin from the package's
+ * bundled `plugins/` directory into the user's working `plugins/` directory.
+ *
+ * Supports `--all` to install every bundled plugin at once, and `--force`
+ * to overwrite plugins that are already installed.
+ */
+async function handleInstall(
+  pluginId: string | undefined,
+  options: { all?: boolean; force?: boolean },
+): Promise<void> {
+  const bundled = discoverBundledPlugins();
+
+  if (bundled.length === 0) {
+    console.error("✗ No bundled first-party plugins found in the package.");
+    process.exit(1);
+  }
+
+  // Determine which plugins to install
+  let toInstall: typeof bundled;
+
+  if (options.all) {
+    toInstall = bundled;
+  } else if (pluginId) {
+    const match = bundled.find((p) => p.id === pluginId);
+    if (!match) {
+      console.error(`✗ Plugin '${pluginId}' is not a bundled first-party plugin.`);
+      console.error(`  Available: ${bundled.map((p) => p.id).join(", ")}`);
+      process.exit(1);
+    }
+    toInstall = [match];
+  } else {
+    console.error("✗ Specify a plugin ID or use --all to install all plugins.");
+    console.error(`  Available: ${bundled.map((p) => p.id).join(", ")}`);
+    process.exit(1);
+  }
+
+  const localPluginsDir = path.join(process.cwd(), "plugins");
+  mkdirSync(localPluginsDir, { recursive: true });
+
+  let installed = 0;
+  let skipped = 0;
+
+  for (const plugin of toInstall) {
+    const destDir = path.join(localPluginsDir, plugin.id);
+    const alreadyExists = existsSync(path.join(destDir, "plugin.json"));
+
+    if (alreadyExists && !options.force) {
+      console.log(`  ⏭ ${plugin.id} — already installed (use --force to overwrite)`);
+      skipped++;
+      continue;
+    }
+
+    // Copy the entire plugin directory recursively
+    cpSync(plugin.sourcePath, destDir, { recursive: true });
+    console.log(`  ✅ ${plugin.id} — installed to plugins/${plugin.id}/`);
+    installed++;
+  }
+
+  console.log(`\n✓ ${installed} installed, ${skipped} skipped`);
+
+  if (installed > 0) {
+    console.log("\nNext steps:");
+    console.log("  co-assistant plugin configure <id>   # Set up credentials");
+    console.log("  co-assistant plugin enable <id>      # Enable the plugin\n");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 
 /**
  * Registers the `plugin` subcommand on the given program.
- * Provides subcommands for managing plugins: list, enable, disable, info, create.
+ * Provides subcommands for managing plugins: list, available, install,
+ * enable, disable, info, create.
  */
 export function registerPluginCommand(program: Command): void {
   const plugin = program
@@ -313,8 +476,21 @@ export function registerPluginCommand(program: Command): void {
 
   plugin
     .command("list")
-    .description("List all available plugins")
+    .description("List all plugins in the local plugins/ directory")
     .action(handleList);
+
+  plugin
+    .command("available")
+    .description("List bundled first-party plugins and their install status")
+    .action(handleAvailable);
+
+  plugin
+    .command("install")
+    .description("Install a first-party plugin from the package")
+    .argument("[id]", "Plugin ID to install (omit with --all)")
+    .option("--all", "Install all available first-party plugins")
+    .option("--force", "Overwrite existing plugins")
+    .action(handleInstall);
 
   plugin
     .command("enable")
