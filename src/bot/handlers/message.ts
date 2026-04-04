@@ -75,6 +75,40 @@ export function splitMessage(text: string, maxLength: number = 4096): string[] {
   return chunks.filter((c) => c.length > 0);
 }
 
+/**
+ * Send a Telegram message with Markdown formatting, falling back to plain
+ * text if Telegram rejects the Markdown (e.g., unmatched `*`, `_`, or `(`).
+ *
+ * AI-generated text often contains special characters that break Telegram's
+ * Markdown parser. This helper ensures the message is always delivered.
+ *
+ * @param sendFn - A function that sends a single message with optional extras.
+ *                 Receives `(text, extra?)` matching telegraf's `ctx.reply`
+ *                 or `telegram.sendMessage(chatId, ...)` signatures.
+ * @param text   - The message text to send.
+ * @param extra  - Additional Telegram send options (reply_parameters, etc.).
+ *                 `parse_mode` is managed by this helper — do NOT include it.
+ */
+export async function safeSendMarkdown(
+  sendFn: (text: string, extra?: Record<string, unknown>) => Promise<unknown>,
+  text: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await sendFn(text, { parse_mode: "Markdown", ...extra });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Telegram returns 400 with "can't parse entities" on bad Markdown
+    if (msg.includes("can't parse entities")) {
+      // Strip markdown bold/italic markers for a clean plain-text fallback
+      const plain = text.replace(/[*_`]/g, "");
+      await sendFn(plain, extra);
+    } else {
+      throw err;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------

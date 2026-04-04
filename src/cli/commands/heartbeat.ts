@@ -168,7 +168,7 @@ export function registerHeartbeatCommand(program: Command): void {
       const { getConfig } = await import("../../core/config.js");
       const { copilotClient } = await import("../../ai/client.js");
       const { sessionManager } = await import("../../ai/session.js");
-      const { splitMessage } = await import("../../bot/handlers/message.js");
+      const { splitMessage, safeSendMarkdown } = await import("../../bot/handlers/message.js");
 
       let config;
       try {
@@ -280,7 +280,10 @@ export function registerHeartbeatCommand(program: Command): void {
               const header = `💓 *Heartbeat: ${event.name}*\n\n`;
               const chunks = splitMessage(header + cleanResponse);
               for (const chunk of chunks) {
-                await telegram.sendMessage(chatId, chunk, { parse_mode: "Markdown" });
+                await safeSendMarkdown(
+                  (text, extra) => telegram.sendMessage(chatId, text, extra),
+                  chunk,
+                );
               }
               console.log("  ✓ Sent to Telegram");
             } catch (err) {

@@ -33,7 +33,7 @@ import { pluginSandbox } from "../plugins/sandbox.js";
 import { credentialManager } from "../plugins/credentials.js";
 import { createBot, type TelegramBot } from "../bot/bot.js";
 import type { Context } from "telegraf";
-import { createMessageHandler, splitMessage } from "../bot/handlers/message.js";
+import { createMessageHandler, splitMessage, safeSendMarkdown } from "../bot/handlers/message.js";
 import { HeartbeatManager } from "./heartbeat.js";
 import { GarbageCollector } from "./gc.js";
 import type { PluginManager } from "../plugins/manager.js";
@@ -269,7 +269,11 @@ export class App {
               const header = `💓 *Heartbeat: ${event.name}*\n\n`;
               const chunks = splitMessage(header + clean);
               for (const chunk of chunks) {
-                await ctx.reply(chunk, { parse_mode: "Markdown", ...replyOpts } as Record<string, unknown>);
+                await safeSendMarkdown(
+                  (text, extra) => ctx.reply(text, extra as Parameters<typeof ctx.reply>[1]),
+                  chunk,
+                  replyOpts as Record<string, unknown>,
+                );
               }
             }
           } catch (err) {
@@ -381,7 +385,10 @@ export class App {
             // Split long responses to respect Telegram's 4096-char limit
             const chunks = splitMessage(fullMessage);
             for (const chunk of chunks) {
-              await bot.getBot().telegram.sendMessage(chatId, chunk, { parse_mode: "Markdown" });
+              await safeSendMarkdown(
+                (text, extra) => bot.getBot().telegram.sendMessage(chatId, text, extra),
+                chunk,
+              );
             }
           } catch (err) {
             this.logger.error({ err, eventName }, "Failed to send heartbeat response via Telegram");
