@@ -2,9 +2,9 @@ You are checking my recent emails for any that require a reply from me.
 
 ## Instructions
 
-1. Use the `gmail_search_emails` tool to fetch my last 10 emails (query: `in:inbox`, maxResults: 10).
+1. Use the `gmail__search_emails` tool to fetch my last 10 emails (query: `in:inbox`, maxResults: 10, **includeBody: true**). This returns full message content inline — do NOT call `gmail__read_email` separately.
 2. **Group the results by `threadId`** — multiple messages with the same threadId are part of the same conversation thread. Treat each thread as ONE item, not separate emails.
-3. For each unique thread, use `gmail_read_email` to read **only the most recent message** in that thread (the first one returned for that threadId — Gmail returns newest first).
+3. For each unique thread, consider **only the most recent message** (the first one returned for that threadId — Gmail returns newest first).
 4. Skip any thread whose most recent message ID appears in the deduplication list below.
 5. For each **new** thread, determine whether it requires a reply from me. Consider:
    - Direct questions asked to me

@@ -117,7 +117,7 @@ export function createGmailTools(auth: GmailAuth, logger: Logger): ToolDefinitio
   const searchEmails: ToolDefinition = {
     name: "search_emails",
     description:
-      "Search for emails in Gmail using a query string (same syntax as the Gmail search bar)",
+      "Search for emails in Gmail. Returns metadata by default; set includeBody=true to also return full message bodies (avoids needing separate read_email calls).",
     parameters: z.object({
       /** Gmail search query (e.g. "from:alice subject:meeting"). */
       query: z.string().describe("Gmail search query"),
@@ -130,13 +130,21 @@ export function createGmailTools(auth: GmailAuth, logger: Logger): ToolDefinitio
         .optional()
         .default(10)
         .describe("Maximum number of results to return"),
+      /** When true, fetches full message bodies inline. Slower per message but
+       *  eliminates the need for separate read_email calls. */
+      includeBody: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Include full message body in results"),
     }),
 
     handler: async (args) => {
       try {
         const query = args.query as string;
         const maxResults = (args.maxResults as number | undefined) ?? 10;
-        logger.debug({ query, maxResults }, "search_emails called");
+        const includeBody = (args.includeBody as boolean | undefined) ?? false;
+        logger.debug({ query, maxResults, includeBody }, "search_emails called");
 
         // Step 1 — List message IDs matching the query.
         const params = new URLSearchParams({
@@ -162,32 +170,47 @@ export function createGmailTools(auth: GmailAuth, logger: Logger): ToolDefinitio
           return "No emails found matching that query.";
         }
 
-        // Step 2 — Fetch each message's metadata (Subject, From, Date, snippet).
+        // Step 2 — Fetch each message. Use "full" format when body is
+        // requested, otherwise "metadata" for a lighter response.
+        const format = includeBody ? "full" : "metadata";
         const headers = await authHeaders(auth);
         const results = await Promise.all(
           listData.messages.map(async (msg) => {
-            const msgRes = await fetch(
-              `${GMAIL_API}/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
-              { headers },
-            );
+            const url = includeBody
+              ? `${GMAIL_API}/messages/${msg.id}?format=${format}`
+              : `${GMAIL_API}/messages/${msg.id}?format=${format}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+            const msgRes = await fetch(url, { headers });
 
             if (!msgRes.ok) {
-              return { id: msg.id, error: `Failed to fetch (${msgRes.status})` };
+              return { id: msg.id, threadId: msg.threadId, error: `Failed to fetch (${msgRes.status})` };
             }
 
             const msgData = (await msgRes.json()) as {
               id: string;
+              threadId: string;
               snippet: string;
-              payload: { headers: Array<{ name: string; value: string }> };
+              payload: {
+                headers: Array<{ name: string; value: string }>;
+                body?: { data?: string };
+                parts?: Array<Record<string, unknown>>;
+                mimeType?: string;
+              };
             };
 
-            return {
+            const result: Record<string, unknown> = {
               id: msgData.id,
+              threadId: msgData.threadId,
               subject: getHeader(msgData.payload.headers, "Subject"),
               from: getHeader(msgData.payload.headers, "From"),
               date: getHeader(msgData.payload.headers, "Date"),
               snippet: msgData.snippet,
             };
+
+            if (includeBody) {
+              result.body = extractBody(msgData.payload as Record<string, unknown>);
+            }
+
+            return result;
           }),
         );
 
