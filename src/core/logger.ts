@@ -28,9 +28,26 @@ function resolveLogLevel(): string {
 }
 
 /**
+ * Check whether the `pino-pretty` module is resolvable at runtime.
+ *
+ * When installed globally via npm, devDependencies (like pino-pretty)
+ * are not present. We probe for the module before configuring the
+ * transport so pino doesn't throw at startup.
+ */
+function isPinoPrettyAvailable(): boolean {
+  try {
+    // Use import.meta.resolve (Node 20+) to check without actually loading
+    import.meta.resolve("pino-pretty");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Build pino options, optionally including the pino-pretty transport when
- * running outside of production. Uses a dynamic import check that works in
- * both CJS and ESM environments.
+ * running outside of production **and** pino-pretty is installed.
+ * Falls back silently to standard JSON output otherwise.
  */
 function buildLoggerOptions(): pino.LoggerOptions {
   const level = resolveLogLevel();
@@ -38,9 +55,7 @@ function buildLoggerOptions(): pino.LoggerOptions {
 
   const opts: pino.LoggerOptions = { level };
 
-  if (!isProduction) {
-    // pino resolves the transport target via its own worker thread import,
-    // so we just need to specify the module name — no require.resolve needed.
+  if (!isProduction && isPinoPrettyAvailable()) {
     opts.transport = {
       target: "pino-pretty",
       options: {
