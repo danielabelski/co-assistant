@@ -7,6 +7,7 @@
  */
 
 import { CopilotClient } from "@github/copilot-sdk";
+import type { CopilotClientOptions } from "@github/copilot-sdk";
 import { createChildLogger } from "../core/logger.js";
 import { AIError } from "../core/errors.js";
 
@@ -35,7 +36,17 @@ export class CopilotClientWrapper {
 
     try {
       logger.info("Starting Copilot client…");
-      this.client = new CopilotClient();
+
+      // Pass the GitHub token explicitly so the SDK authenticates on
+      // headless servers where `gh auth` / stored OAuth tokens aren't available.
+      const opts: CopilotClientOptions = {};
+      const token = process.env.GITHUB_TOKEN;
+      if (token) {
+        opts.githubToken = token;
+        logger.debug("Using GITHUB_TOKEN for SDK authentication");
+      }
+
+      this.client = new CopilotClient(opts);
       await this.client.start();
       this.isStarted = true;
       logger.info("Copilot client started successfully");
