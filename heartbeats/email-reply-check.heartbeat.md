@@ -2,7 +2,7 @@ You are checking my recent emails for any that require a reply from me.
 
 ## Instructions
 
-1. Use `gmail__search_threads` to fetch my recent inbox threads (query: `in:inbox`, maxThreads: 8, **includeLatestBody: true**). This single call returns all threads with every message (including your sent replies) and the full body of the latest message. **Do NOT call any other Gmail tools** — this gives you everything you need.
+1. Use `gmail__search_threads` to fetch my recent inbox threads (query: `in:inbox`, maxThreads: 18, **includeLatestBody: true**). This single call returns all threads with every message (including your sent replies) and the full body of the latest message. **Do NOT call any other Gmail tools** — this gives you everything you need.
 2. Skip any thread whose latest message ID appears in the deduplication list below. Also skip newsletters, automated notifications, marketing, no-reply senders, and receipts.
 3. For each remaining thread, check the `lastMessageIsSent` field. **If `lastMessageIsSent` is true, I already replied — SKIP this thread.**
 4. Only for threads where `lastMessageIsSent` is false, determine whether it requires a reply from me. Consider:
