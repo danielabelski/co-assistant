@@ -355,5 +355,67 @@ export function createGmailTools(auth: GmailAuth, logger: Logger): ToolDefinitio
     },
   };
 
-  return [searchEmails, readEmail, sendEmail];
+  // -----------------------------------------------------------------------
+  // get_thread
+  // -----------------------------------------------------------------------
+  const getThread: ToolDefinition = {
+    name: "get_thread",
+    description:
+      "Get all messages in a Gmail thread (including your sent replies). " +
+      "Use this to check if you already replied to a conversation before suggesting a new reply.",
+    parameters: z.object({
+      /** The Gmail thread ID (returned by search_emails or read_email). */
+      threadId: z.string().describe("Gmail thread ID"),
+    }),
+
+    handler: async (args) => {
+      try {
+        const threadId = args.threadId as string;
+        logger.debug({ threadId }, "get_thread called");
+
+        const res = await fetch(
+          `${GMAIL_API}/threads/${threadId}?format=metadata` +
+            "&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date",
+          { headers: await authHeaders(auth) },
+        );
+
+        if (!res.ok) {
+          const errText = await res.text();
+          logger.error({ status: res.status, errText }, "Gmail get_thread failed");
+          return `Error getting thread (${res.status}): ${errText}`;
+        }
+
+        const data = (await res.json()) as {
+          id: string;
+          messages: Array<{
+            id: string;
+            labelIds: string[];
+            snippet: string;
+            payload: { headers: Array<{ name: string; value: string }> };
+          }>;
+        };
+
+        const messages = data.messages.map((msg) => ({
+          id: msg.id,
+          from: getHeader(msg.payload.headers, "From"),
+          to: getHeader(msg.payload.headers, "To"),
+          date: getHeader(msg.payload.headers, "Date"),
+          snippet: msg.snippet,
+          isSent: msg.labelIds?.includes("SENT") ?? false,
+        }));
+
+        return {
+          threadId: data.id,
+          messageCount: messages.length,
+          messages,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ error: message }, "get_thread error");
+        return `Error getting thread: ${message}`;
+      }
+    },
+  };
+
+  return [searchEmails, readEmail, sendEmail, getThread];
 }

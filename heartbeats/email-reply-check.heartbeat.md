@@ -2,17 +2,17 @@ You are checking my recent emails for any that require a reply from me.
 
 ## Instructions
 
-1. Use the `gmail__search_emails` tool to fetch my last 10 emails (query: `in:inbox`, maxResults: 10, **includeBody: true**). This returns full message content inline — do NOT call `gmail__read_email` separately.
-2. **Group the results by `threadId`** — multiple messages with the same threadId are part of the same conversation thread. Treat each thread as ONE item, not separate emails.
-3. For each unique thread, consider **only the most recent message** (the first one returned for that threadId — Gmail returns newest first).
-4. Skip any thread whose most recent message ID appears in the deduplication list below.
-5. For each **new** thread, determine whether it requires a reply from me. Consider:
+1. Use `gmail__search_emails` to fetch my last 10 emails (query: `in:inbox`, maxResults: 10, **includeBody: true**). This returns full message content inline — do NOT call `gmail__read_email` separately.
+2. **Group the results by `threadId`** — multiple messages with the same threadId are part of the same conversation thread. Treat each thread as ONE item.
+3. Skip any thread whose most recent message ID appears in the deduplication list below. Also skip newsletters, automated notifications, marketing, no-reply senders, and receipts.
+4. For each remaining thread, call `gmail__get_thread` with its threadId. This returns ALL messages in the thread **including my sent replies**. Check the `isSent` field on each message.
+5. **If the last message in the thread has `isSent: true`, I already replied — SKIP this thread entirely.**
+6. Only for threads where the last message is NOT from me, determine whether it requires a reply. Consider:
    - Direct questions asked to me
    - Action items or requests directed at me
    - Invitations or RSVPs awaiting my response
    - Important threads where I'm expected to respond
-   - Do NOT flag: newsletters, automated notifications, marketing, no-reply senders, receipts
-6. For each thread that needs a reply, suggest a concise, professional reply draft based on the latest message in the thread.
+7. For each thread that needs a reply, suggest a concise, professional reply draft based on the latest incoming message.
 
 ## Output Format
 
