@@ -18,7 +18,7 @@
 
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { tsImport } from "tsx/esm/api";
+import { register } from "tsx/esm/api";
 import type { Logger } from "pino";
 import { createChildLogger } from "../core/logger.js";
 import type { PluginRegistry } from "./registry.js";
@@ -159,10 +159,17 @@ export class PluginManager {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mod: any;
     try {
-      // Use tsx's tsImport for .ts files so sub-imports (e.g. ./auth.js → ./auth.ts)
-      // are resolved correctly even when running from compiled dist/ output.
+      // Register tsx's ESM loader hooks so that .ts files and their sub-imports
+      // (e.g. ./auth.js → ./auth.ts) are resolved correctly at runtime.
+      // The unregister handle is called immediately after import to avoid
+      // polluting the global loader for the rest of the process.
       if (pluginPath.endsWith(".ts")) {
-        mod = await tsImport(pluginPath, import.meta.url);
+        const unregister = register();
+        try {
+          mod = await import(pluginPath);
+        } finally {
+          unregister();
+        }
       } else {
         mod = await import(pluginPath);
       }
