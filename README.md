@@ -1,5 +1,9 @@
 # 🤖 Co-Assistant
 
+[![CI](https://github.com/hmawla/co-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/hmawla/co-assistant/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@hmawla/co-assistant)](https://www.npmjs.com/package/@hmawla/co-assistant)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **[Homepage](https://hmawla.github.io/co-assistant)** · **[npm](https://www.npmjs.com/package/@hmawla/co-assistant)** · **[Plugin Guide](docs/plugin-development.md)** · **[CLI Reference](docs/cli-reference.md)**
 
 AI-powered Telegram personal assistant built on the GitHub Copilot SDK.
