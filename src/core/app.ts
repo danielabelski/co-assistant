@@ -12,6 +12,7 @@
  */
 
 import dns from "node:dns";
+import { spawn } from "node:child_process";
 import type { Logger } from "pino";
 import { createChildLogger, setLogLevel } from "./logger.js";
 import { getConfig } from "./config.js";
@@ -32,7 +33,7 @@ import { createPluginManager } from "../plugins/manager.js";
 import { pluginSandbox } from "../plugins/sandbox.js";
 import { credentialManager } from "../plugins/credentials.js";
 import { createBot, type TelegramBot } from "../bot/bot.js";
-import type { Context } from "telegraf";
+import { Markup, type Context } from "telegraf";
 import { createMessageHandler, splitMessage, safeSendMarkdown } from "../bot/handlers/message.js";
 import { HeartbeatManager } from "./heartbeat.js";
 import { GarbageCollector } from "./gc.js";
@@ -320,11 +321,15 @@ export class App {
             );
           } else if (result.updateAvailable) {
             await safeSendMarkdown(
-              (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+              (text, extra) => ctx.reply(text, {
+                ...extra,
+                ...replyOpts,
+                ...Markup.inlineKeyboard([
+                  Markup.button.callback("📦 Update Now", `self_update:${result.latestVersion}`),
+                ]),
+              }),
               `📦 *Update available: v${result.latestVersion}*\n\n` +
-                `You're running v${result.currentVersion}. To update:\n\n` +
-                "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
-                `Then restart with \`co-assistant start\`.`,
+                `You're running v${result.currentVersion}.`,
             );
           } else {
             await safeSendMarkdown(
@@ -340,7 +345,7 @@ export class App {
             "🤖 *Co-Assistant Commands*\n\n" +
             "/heartbeat \\[name\\] — Run heartbeat event\\(s\\)\n" +
             "/hb \\[name\\] — Shorthand for /heartbeat\n" +
-            "/update — Check for Co\\-Assistant updates\n" +
+            "/update — Check for updates \\(tap to self\\-update\\)\n" +
             "/help — Show this message\n\n" +
             "Or just send a message to chat with the AI\\.",
             { parse_mode: "MarkdownV2", ...replyOpts } as Record<string, unknown>,
@@ -362,6 +367,66 @@ export class App {
       allowedUserId: Number(config.env.TELEGRAM_USER_ID),
       onMessage: messageHandler,
       onCommand: commandHandler,
+    });
+
+    // Register inline keyboard callback handler for self-update action
+    bot.getBot().action(/^self_update:(.+)$/, async (ctx) => {
+      const version = ctx.match[1];
+      await ctx.answerCbQuery();
+
+      try {
+        await ctx.editMessageText(
+          `⏳ Updating to v${version}…\n\nRunning: npm install -g @hmawla/co-assistant@latest`,
+        );
+
+        // Run npm install in a child process
+        const npmResult = await new Promise<{ code: number; output: string }>((resolve) => {
+          const chunks: string[] = [];
+          const child = spawn("npm", ["install", "-g", "@hmawla/co-assistant@latest"], {
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env },
+          });
+
+          child.stdout?.on("data", (d: Buffer) => chunks.push(d.toString()));
+          child.stderr?.on("data", (d: Buffer) => chunks.push(d.toString()));
+          child.on("close", (code) => resolve({ code: code ?? 1, output: chunks.join("") }));
+          child.on("error", (err) => resolve({ code: 1, output: err.message }));
+        });
+
+        if (npmResult.code !== 0) {
+          this.logger.error({ output: npmResult.output }, "npm install failed during self-update");
+          await ctx.editMessageText(
+            `❌ Update failed (exit code ${npmResult.code}).\n\n` +
+              `Try manually:\nnpm install -g @hmawla/co-assistant@latest`,
+          );
+          return;
+        }
+
+        this.logger.info({ version }, "Self-update completed — restarting");
+        await ctx.editMessageText(
+          `✅ Updated to v${version}!\n\n🔄 Restarting Co-Assistant…`,
+        );
+
+        // Give Telegram time to deliver the message, then re-exec
+        setTimeout(() => {
+          const args = process.argv.slice(1);
+          const child = spawn(process.argv[0]!, args, {
+            detached: true,
+            stdio: "inherit",
+            env: process.env,
+          });
+          child.unref();
+          process.exit(0);
+        }, 1000);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        this.logger.error({ err }, "Self-update failed");
+        try {
+          await ctx.editMessageText(
+            `❌ Update failed: ${reason}\n\nTry manually:\nnpm install -g @hmawla/co-assistant@latest`,
+          );
+        } catch { /* ignore edit failure */ }
+      }
     });
 
     try {
@@ -405,7 +470,7 @@ export class App {
         // Send heartbeat prompt to the AI session
         async (prompt) => sessionManager.sendMessage(prompt),
         // Forward the AI's response to the user via Telegram
-        async (eventName, response) => {
+        async (eventName, response, extraOpts) => {
           try {
             const chatId = config.env.TELEGRAM_USER_ID;
             const header = `💓 *Heartbeat: ${eventName}*\n\n`;
@@ -413,10 +478,14 @@ export class App {
 
             // Split long responses to respect Telegram's 4096-char limit
             const chunks = splitMessage(fullMessage);
-            for (const chunk of chunks) {
+            for (let i = 0; i < chunks.length; i++) {
               await safeSendMarkdown(
-                (text, extra) => bot.getBot().telegram.sendMessage(chatId, text, extra),
-                chunk,
+                (text, extra) => bot.getBot().telegram.sendMessage(chatId, text, {
+                  ...extra,
+                  // Attach extra opts (e.g. inline keyboard) to the last chunk only
+                  ...(i === chunks.length - 1 ? extraOpts : {}),
+                }),
+                chunks[i]!,
               );
             }
           } catch (err) {

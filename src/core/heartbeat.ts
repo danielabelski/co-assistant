@@ -84,7 +84,7 @@ export type HeartbeatSendFn = (prompt: string) => Promise<string | null>;
  * @param eventName - The heartbeat event name (for context).
  * @param response  - The AI's response text.
  */
-export type HeartbeatNotifyFn = (eventName: string, response: string) => Promise<void>;
+export type HeartbeatNotifyFn = (eventName: string, response: string, extraOpts?: Record<string, unknown>) => Promise<void>;
 
 /**
  * Persisted deduplication state for a single heartbeat event.
@@ -499,15 +499,17 @@ export class HeartbeatManager {
       // Persist before notifying — ensures we don't spam on notify failure
       this.saveUpdateCheckState(latestVersion);
 
-      // Notify the user (if notifyFn provided)
+      // Notify the user (if notifyFn provided) with an inline "Update Now" button
       if (notifyFn) {
         const message =
           `📦 *Update available: v${latestVersion}*\n\n` +
-          `You're running v${currentVersion}. To update:\n\n` +
-          "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
-          `Then restart the bot with \`co-assistant start\`.`;
+          `You're running v${currentVersion}.`;
 
-        await notifyFn("update-check", message);
+        await notifyFn("update-check", message, {
+          reply_markup: {
+            inline_keyboard: [[{ text: "📦 Update Now", callback_data: `self_update:${latestVersion}` }]],
+          },
+        });
 
         this.logger.info(
           { from: currentVersion, to: latestVersion },

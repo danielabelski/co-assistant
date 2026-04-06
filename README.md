@@ -352,7 +352,7 @@ All configured via `.env` (the setup wizard handles this):
 | `/enable <plugin>` | Enable a plugin |
 | `/disable <plugin>` | Disable a plugin |
 | `/clear` | Clear conversation and reset AI context |
-| `/update` | Check for Co-Assistant updates on npm |
+| `/update` | Check for updates — tap "Update Now" to self-update |
 | `/status` | Show bot status |
 | `/heartbeat [name]` | Run heartbeat event(s) on demand |
 | `/hb [name]` | Shorthand for `/heartbeat` |
