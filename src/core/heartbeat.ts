@@ -12,6 +12,10 @@
  * in its response; those IDs are persisted in a companion `.state.json` file and
  * injected on subsequent runs.
  *
+ * **Update checker**: A built-in check runs alongside heartbeat events. It queries
+ * the npm registry for the latest published version and notifies the user once
+ * when a newer version is available (no AI tokens consumed).
+ *
  * Example file: `heartbeats/morning-briefing.heartbeat.md`
  * ```
  * Summarize my unread emails and today's calendar events.
@@ -20,6 +24,7 @@
 
 import { readdirSync, readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
+import { createRequire } from "node:module";
 import type { Logger } from "pino";
 import { createChildLogger } from "./logger.js";
 
@@ -44,6 +49,12 @@ const MAX_STATE_IDS = 200;
 
 /** Regex to extract processed IDs from the AI response. */
 const PROCESSED_MARKER_RE = /<!--\s*PROCESSED:\s*(.*?)\s*-->/gi;
+
+/** npm package name used to query the registry for updates. */
+const NPM_PACKAGE_NAME = "@hmawla/co-assistant";
+
+/** State file for the built-in update checker (tracks last notified version). */
+const UPDATE_CHECK_STATE = join(HEARTBEATS_DIR, "update-check.state.json");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -405,7 +416,133 @@ export class HeartbeatManager {
       runCycle().catch((err) => {
         this.logger.error({ err }, "Heartbeat cycle failed");
       });
+
+      // Run the update checker in parallel (non-blocking, never throws)
+      this.checkForUpdates(notifyFn).catch((err) => {
+        this.logger.debug({ err }, "Update check failed (non-critical)");
+      });
     }, intervalMs);
+  }
+
+  // -----------------------------------------------------------------------
+  // Built-in: update checker
+  // -----------------------------------------------------------------------
+
+  /**
+   * Check the npm registry for a newer version of Co-Assistant. Notifies
+   * the user exactly once per new version by persisting the last-notified
+   * version to a state file. No AI tokens are consumed.
+   *
+   * @param notifyFn - Function that delivers a message to the user.
+   */
+  private async checkForUpdates(notifyFn: HeartbeatNotifyFn): Promise<void> {
+    try {
+      // Read our current version from package.json
+      const currentVersion = this.getCurrentVersion();
+      if (!currentVersion) return;
+
+      // Fetch latest version from npm (5s timeout to avoid blocking)
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      let res: Response;
+      try {
+        res = await fetch(
+          `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`,
+          { signal: controller.signal, headers: { Accept: "application/json" } },
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!res.ok) {
+        this.logger.debug({ status: res.status }, "npm registry returned non-OK (skipping update check)");
+        return;
+      }
+
+      const data = (await res.json()) as { version?: string };
+      const latestVersion = data.version;
+      if (!latestVersion) return;
+
+      // Compare versions — only notify if latest is strictly newer
+      if (!isNewerVersion(currentVersion, latestVersion)) {
+        this.logger.debug({ currentVersion, latestVersion }, "Co-Assistant is up to date");
+        return;
+      }
+
+      // Check if we already notified for this version
+      const lastNotified = this.loadUpdateCheckState();
+      if (lastNotified === latestVersion) {
+        this.logger.debug({ latestVersion }, "Already notified about this version — skipping");
+        return;
+      }
+
+      // Notify the user
+      const message =
+        `📦 *Update available: v${latestVersion}*\n\n` +
+        `You're running v${currentVersion}. To update:\n\n` +
+        "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
+        `Then restart the bot with \`co-assistant start\`.`;
+
+      await notifyFn("update-check", message);
+
+      // Persist so we don't notify again for this version
+      this.saveUpdateCheckState(latestVersion);
+      this.logger.info(
+        { from: currentVersion, to: latestVersion },
+        `Update notification sent (v${currentVersion} → v${latestVersion})`,
+      );
+    } catch (err) {
+      // Non-critical — swallow and log at debug level
+      this.logger.debug({ err }, "Update check failed");
+    }
+  }
+
+  /**
+   * Read the current installed version from package.json.
+   *
+   * @returns The semver version string, or null if it cannot be determined.
+   */
+  private getCurrentVersion(): string | null {
+    try {
+      const require = createRequire(import.meta.url);
+      const pkg = require("../../package.json") as { version?: string };
+      return pkg.version ?? null;
+    } catch {
+      this.logger.debug("Could not read package.json for version check");
+      return null;
+    }
+  }
+
+  /**
+   * Load the last version we notified the user about.
+   *
+   * @returns The semver string of the last notified version, or null.
+   */
+  private loadUpdateCheckState(): string | null {
+    try {
+      if (!existsSync(UPDATE_CHECK_STATE)) return null;
+      const raw = JSON.parse(readFileSync(UPDATE_CHECK_STATE, "utf-8")) as {
+        lastNotifiedVersion?: string;
+      };
+      return raw.lastNotifiedVersion ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Persist the version we just notified about so we don't repeat it.
+   *
+   * @param version - The semver string of the version that was notified.
+   */
+  private saveUpdateCheckState(version: string): void {
+    ensureHeartbeatsDir();
+    writeFileSync(
+      UPDATE_CHECK_STATE,
+      JSON.stringify({ lastNotifiedVersion: version, notifiedAt: new Date().toISOString() }, null, 2) + "\n",
+      "utf-8",
+    );
   }
 
   /**
@@ -438,4 +575,26 @@ function ensureHeartbeatsDir(): void {
   if (!existsSync(HEARTBEATS_DIR)) {
     mkdirSync(HEARTBEATS_DIR, { recursive: true });
   }
+}
+
+/**
+ * Compare two semver version strings. Returns true if `latest` is strictly
+ * newer than `current`. Handles standard major.minor.patch format.
+ *
+ * @param current - The currently installed version (e.g. "1.0.11").
+ * @param latest  - The latest published version (e.g. "1.1.0").
+ * @returns True if `latest` > `current`.
+ */
+function isNewerVersion(current: string, latest: string): boolean {
+  const parse = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+  const c = parse(current);
+  const l = parse(latest);
+
+  for (let i = 0; i < Math.max(c.length, l.length); i++) {
+    const cv = c[i] ?? 0;
+    const lv = l[i] ?? 0;
+    if (lv > cv) return true;
+    if (lv < cv) return false;
+  }
+  return false;
 }
