@@ -1,4 +1,4 @@
-# 🤖 Co-Assistant
+# Co-Assistant
 
 [![CI](https://github.com/hmawla/co-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/hmawla/co-assistant/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@hmawla/co-assistant)](https://www.npmjs.com/package/@hmawla/co-assistant)
