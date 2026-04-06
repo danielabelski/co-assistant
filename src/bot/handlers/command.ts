@@ -13,6 +13,7 @@ import type { SessionManager } from "../../ai/session.js";
 import type { ModelRegistry } from "../../ai/models.js";
 import type { PluginManager } from "../../plugins/manager.js";
 import type { ConversationRepository } from "../../storage/repositories/conversation.js";
+import type { HeartbeatManager } from "../../core/heartbeat.js";
 import { createChildLogger } from "../../core/logger.js";
 
 const logger = createChildLogger("bot:commands");
@@ -31,6 +32,8 @@ export interface CommandHandlerDeps {
   pluginManager: PluginManager;
   /** Conversation message persistence. */
   conversationRepo: ConversationRepository;
+  /** Heartbeat manager for update checking. */
+  heartbeatManager: HeartbeatManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +92,7 @@ function safe(
  * - `/enable`  — Enable a plugin
  * - `/disable` — Disable a plugin
  * - `/clear`   — Clear conversation history and reset AI sessions (fresh context)
+ * - `/update`  — Check for Co-Assistant updates on npm
  * - `/status`  — Show bot status overview
  *
  * @param bot  - The Telegraf bot instance to attach commands to.
@@ -98,7 +102,7 @@ export function registerBotCommands(
   bot: Telegraf,
   deps: CommandHandlerDeps,
 ): void {
-  const { sessionManager, modelRegistry, pluginManager, conversationRepo } =
+  const { sessionManager, modelRegistry, pluginManager, conversationRepo, heartbeatManager } =
     deps;
 
   // -- /start ---------------------------------------------------------------
@@ -143,6 +147,7 @@ export function registerBotCommands(
           `/enable <plugin> - Enable a plugin\n` +
           `/disable <plugin> - Disable a plugin\n` +
           `/clear - Clear conversation and reset AI context\n` +
+          `/update - Check for Co-Assistant updates\n` +
           `/status - Show bot status`,
       );
     }),
@@ -283,6 +288,38 @@ export function registerBotCommands(
         logger.error({ err }, "Failed to rebuild sessions during /clear");
         await ctx.reply(
           `🗑️ History cleared (${count} messages), but session rebuild failed: ${reason}`,
+        );
+      }
+    }),
+  );
+
+  // -- /update --------------------------------------------------------------
+
+  bot.command(
+    "update",
+    safe("update", async (ctx) => {
+      logger.info("Handling /update command");
+
+      await ctx.reply("🔍 Checking for updates…");
+
+      const result = await heartbeatManager.checkForUpdates();
+
+      if (!result) {
+        await ctx.reply("⚠️ Could not reach the npm registry. Try again later.");
+        return;
+      }
+
+      if (result.updateAvailable) {
+        await ctx.reply(
+          `📦 Update available: v${result.latestVersion}\n` +
+            `You're running v${result.currentVersion}.\n\n` +
+            `To update:\n` +
+            `npm install -g @hmawla/co-assistant@latest\n\n` +
+            `Then restart with: co-assistant start`,
+        );
+      } else {
+        await ctx.reply(
+          `✅ You're up to date! (v${result.currentVersion})`,
         );
       }
     }),

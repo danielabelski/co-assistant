@@ -435,11 +435,27 @@ export class HeartbeatManager {
    *
    * @param notifyFn - Function that delivers a message to the user.
    */
-  private async checkForUpdates(notifyFn: HeartbeatNotifyFn): Promise<void> {
+  /**
+   * Check the npm registry for a newer version of Co-Assistant. Notifies
+   * the user exactly once per new version by persisting the last-checked
+   * version to a state file. No AI tokens are consumed.
+   *
+   * The state file is always written after a successful registry check so
+   * that subsequent cycles skip the notification even if the first notify
+   * call fails.
+   *
+   * @param notifyFn - Function that delivers a message to the user, or null to skip notification (used by /update command).
+   * @returns Object with check results, or null if the check could not run.
+   */
+  async checkForUpdates(notifyFn?: HeartbeatNotifyFn | null): Promise<{
+    currentVersion: string;
+    latestVersion: string;
+    updateAvailable: boolean;
+  } | null> {
     try {
       // Read our current version from package.json
       const currentVersion = this.getCurrentVersion();
-      if (!currentVersion) return;
+      if (!currentVersion) return null;
 
       // Fetch latest version from npm (5s timeout to avoid blocking)
       const controller = new AbortController();
@@ -457,44 +473,53 @@ export class HeartbeatManager {
 
       if (!res.ok) {
         this.logger.debug({ status: res.status }, "npm registry returned non-OK (skipping update check)");
-        return;
+        return null;
       }
 
       const data = (await res.json()) as { version?: string };
       const latestVersion = data.version;
-      if (!latestVersion) return;
+      if (!latestVersion) return null;
 
-      // Compare versions — only notify if latest is strictly newer
-      if (!isNewerVersion(currentVersion, latestVersion)) {
+      const updateAvailable = isNewerVersion(currentVersion, latestVersion);
+
+      if (!updateAvailable) {
+        // Up to date — persist current version so the state file always exists
+        this.saveUpdateCheckState(currentVersion);
         this.logger.debug({ currentVersion, latestVersion }, "Co-Assistant is up to date");
-        return;
+        return { currentVersion, latestVersion, updateAvailable: false };
       }
 
-      // Check if we already notified for this version
+      // Check if we already notified for this version (skip for manual /update checks)
       const lastNotified = this.loadUpdateCheckState();
-      if (lastNotified === latestVersion) {
+      if (notifyFn && lastNotified === latestVersion) {
         this.logger.debug({ latestVersion }, "Already notified about this version — skipping");
-        return;
+        return { currentVersion, latestVersion, updateAvailable: true };
       }
 
-      // Notify the user
-      const message =
-        `📦 *Update available: v${latestVersion}*\n\n` +
-        `You're running v${currentVersion}. To update:\n\n` +
-        "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
-        `Then restart the bot with \`co-assistant start\`.`;
-
-      await notifyFn("update-check", message);
-
-      // Persist so we don't notify again for this version
+      // Persist before notifying — ensures we don't spam on notify failure
       this.saveUpdateCheckState(latestVersion);
-      this.logger.info(
-        { from: currentVersion, to: latestVersion },
-        `Update notification sent (v${currentVersion} → v${latestVersion})`,
-      );
+
+      // Notify the user (if notifyFn provided)
+      if (notifyFn) {
+        const message =
+          `📦 *Update available: v${latestVersion}*\n\n` +
+          `You're running v${currentVersion}. To update:\n\n` +
+          "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
+          `Then restart the bot with \`co-assistant start\`.`;
+
+        await notifyFn("update-check", message);
+
+        this.logger.info(
+          { from: currentVersion, to: latestVersion },
+          `Update notification sent (v${currentVersion} → v${latestVersion})`,
+        );
+      }
+
+      return { currentVersion, latestVersion, updateAvailable: true };
     } catch (err) {
       // Non-critical — swallow and log at debug level
       this.logger.debug({ err }, "Update check failed");
+      return null;
     }
   }
 

@@ -307,11 +307,40 @@ export class App {
           await runHeartbeatOnDemand(ctx, args.trim() || undefined);
           break;
 
+        case "update": {
+          await safeSendMarkdown(
+            (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+            "🔍 Checking for updates…",
+          );
+          const result = await heartbeatManager.checkForUpdates();
+          if (!result) {
+            await safeSendMarkdown(
+              (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+              "⚠️ Could not reach the npm registry. Try again later.",
+            );
+          } else if (result.updateAvailable) {
+            await safeSendMarkdown(
+              (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+              `📦 *Update available: v${result.latestVersion}*\n\n` +
+                `You're running v${result.currentVersion}. To update:\n\n` +
+                "```\nnpm install -g @hmawla/co-assistant@latest\n```\n\n" +
+                `Then restart with \`co-assistant start\`.`,
+            );
+          } else {
+            await safeSendMarkdown(
+              (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+              `✅ You're up to date! (v${result.currentVersion})`,
+            );
+          }
+          break;
+        }
+
         case "help":
           await ctx.reply(
             "🤖 *Co-Assistant Commands*\n\n" +
             "/heartbeat \\[name\\] — Run heartbeat event\\(s\\)\n" +
             "/hb \\[name\\] — Shorthand for /heartbeat\n" +
+            "/update — Check for Co\\-Assistant updates\n" +
             "/help — Show this message\n\n" +
             "Or just send a message to chat with the AI\\.",
             { parse_mode: "MarkdownV2", ...replyOpts } as Record<string, unknown>,
