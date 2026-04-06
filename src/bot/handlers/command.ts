@@ -88,7 +88,7 @@ function safe(
  * - `/plugins` — List plugins and their status
  * - `/enable`  — Enable a plugin
  * - `/disable` — Disable a plugin
- * - `/clear`   — Clear conversation history
+ * - `/clear`   — Clear conversation history and reset AI sessions (fresh context)
  * - `/status`  — Show bot status overview
  *
  * @param bot  - The Telegraf bot instance to attach commands to.
@@ -142,7 +142,7 @@ export function registerBotCommands(
           `/plugins - List plugins and their status\n` +
           `/enable <plugin> - Enable a plugin\n` +
           `/disable <plugin> - Disable a plugin\n` +
-          `/clear - Clear conversation history\n` +
+          `/clear - Clear conversation and reset AI context\n` +
           `/status - Show bot status`,
       );
     }),
@@ -265,12 +265,26 @@ export function registerBotCommands(
     safe("clear", async (ctx) => {
       logger.info("Handling /clear command");
 
+      // 1. Clear persisted conversation history
       const count = conversationRepo.count();
       conversationRepo.clear();
 
-      await ctx.reply(
-        `🗑️ Conversation history cleared. ${count} message${count !== 1 ? "s" : ""} deleted.`,
-      );
+      // 2. Rebuild the AI session pool so the model starts with a blank context
+      await ctx.reply("🔄 Clearing context and rebuilding sessions…");
+      try {
+        await sessionManager.resetSessions();
+        await ctx.reply(
+          `✅ Context cleared.\n` +
+            `• ${count} message${count !== 1 ? "s" : ""} deleted from history\n` +
+            `• AI sessions rebuilt — starting fresh`,
+        );
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error({ err }, "Failed to rebuild sessions during /clear");
+        await ctx.reply(
+          `🗑️ History cleared (${count} messages), but session rebuild failed: ${reason}`,
+        );
+      }
     }),
   );
 

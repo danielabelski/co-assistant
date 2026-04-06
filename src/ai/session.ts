@@ -438,6 +438,19 @@ export class SessionManager {
   }
 
   /**
+   * Reset all sessions — closes the pool and rebuilds it with the same
+   * model and tools. This gives the AI a completely fresh context with no
+   * memory of prior conversation turns.
+   *
+   * @throws {AIError} If pool recreation fails.
+   */
+  async resetSessions(): Promise<void> {
+    this.logger.info({ model: this.currentModel }, "Resetting sessions (fresh context)");
+    await this.closeSession();
+    await this.createSession(this.currentModel, this.tools);
+  }
+
+  /**
    * Replace the registered tool set. The pool must be rebuilt because the
    * Copilot SDK binds tools at session creation time.
    *
