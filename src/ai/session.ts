@@ -222,9 +222,10 @@ export class SessionManager {
   /**
    * Replace a broken/stuck session with a fresh one.
    *
-   * Called when `sendAndWait` times out, which leaves the SDK session in
-   * an unrecoverable state. We disconnect the old session (best-effort)
-   * and create a replacement in-place so the pool stays at full capacity.
+   * Called when `sendAndWait` times out (session stuck) or the server evicts
+   * the session after a long idle period ("Session not found"). Disconnects
+   * the old session (best-effort) and creates a replacement in-place so the
+   * pool stays at full capacity.
    */
   private async recreatePoolSession(ps: PooledSession): Promise<void> {
     const idx = ps.index;
@@ -357,6 +358,36 @@ export class SessionManager {
    * @returns The assistant's full response content.
    * @throws {AIError} If no session pool is active or the send fails.
    */
+  /**
+   * Check whether an error indicates the session is dead and should be recreated.
+   * Covers both SDK-side timeout ("session.idle" never fires) and server-side
+   * eviction ("Session not found" — happens after long idle periods).
+   */
+  private isSessionDead(reason: string): boolean {
+    return (
+      (reason.includes("Timeout") && reason.includes("session.idle")) ||
+      reason.includes("Session not found")
+    );
+  }
+
+  /**
+   * Send a prompt and wait for the complete assistant response.
+   *
+   * Acquires a free session from the pool, sends the prompt via
+   * `sendAndWait`, and releases the session when done. Multiple callers
+   * can run in parallel (up to `poolSize`). If all sessions are busy,
+   * the caller blocks until one frees up.
+   *
+   * If the session has been evicted server-side ("Session not found") or
+   * timed out, it is recreated and the message is retried once.
+   *
+   * @param prompt  - The user message to send.
+   * @param timeout - Timeout in ms (default: 300 000 = 5 min). Complex prompts
+   *                  involving multiple tool calls (e.g. heartbeats) can take
+   *                  longer than the SDK's default 60 s.
+   * @returns The assistant's full response content.
+   * @throws {AIError} If no session pool is active or the send fails.
+   */
   async sendMessage(prompt: string, timeout: number = 300_000): Promise<string> {
     this.ensureSession();
 
@@ -366,40 +397,59 @@ export class SessionManager {
     const ps = await this.acquire();
     let sessionRecreating = false;
     try {
-      this.logger.debug(
-        { promptLength: fullPrompt.length, timeout, session: ps.index },
-        "Sending message (blocking)",
-      );
-
-      const response = await ps.session.sendAndWait({ prompt: fullPrompt }, timeout);
-
-      const content = response?.data?.content ?? "";
-      this.logger.debug(
-        { responseLength: content.length, session: ps.index },
-        "Received response",
-      );
-      return content;
+      return await this.trySendAndWait(ps, fullPrompt, timeout);
     } catch (error: unknown) {
       const reason = error instanceof Error ? error.message : String(error);
       this.logger.error({ err: error, session: ps.index }, "sendMessage failed");
 
-      // If the SDK timed out waiting for session.idle, the session is stuck.
-      // Recreate it in the background so the pool stays healthy.
-      if (reason.includes("Timeout") && reason.includes("session.idle")) {
+      // If the session is dead (evicted or timed out), recreate and retry once
+      if (this.isSessionDead(reason)) {
         sessionRecreating = true;
-        this.recreatePoolSession(ps).catch((err) => {
-          this.logger.error({ err, session: ps.index }, "Background session recreation failed");
-        });
+        this.logger.warn({ session: ps.index, reason }, "Session dead — recreating and retrying");
+
+        try {
+          await this.recreatePoolSession(ps);
+          return await this.trySendAndWait(ps, fullPrompt, timeout);
+        } catch (retryError: unknown) {
+          const retryReason = retryError instanceof Error ? retryError.message : String(retryError);
+          this.logger.error({ err: retryError, session: ps.index }, "Retry after session recreation also failed");
+          throw AIError.sendFailed(retryReason);
+        } finally {
+          // After retry (success or failure), release the session
+          this.release(ps);
+        }
       }
 
       throw AIError.sendFailed(reason);
     } finally {
-      // Skip release when the session is being recreated — recreatePoolSession
-      // handles the slot lifecycle (disconnect → create → mark idle).
       if (!sessionRecreating) {
         this.release(ps);
       }
     }
+  }
+
+  /**
+   * Low-level send-and-wait on a specific pooled session.
+   * Separated from `sendMessage` so retry logic can reuse it cleanly.
+   */
+  private async trySendAndWait(
+    ps: PooledSession,
+    prompt: string,
+    timeout: number,
+  ): Promise<string> {
+    this.logger.debug(
+      { promptLength: prompt.length, timeout, session: ps.index },
+      "Sending message (blocking)",
+    );
+
+    const response = await ps.session.sendAndWait({ prompt }, timeout);
+
+    const content = response?.data?.content ?? "";
+    this.logger.debug(
+      { responseLength: content.length, session: ps.index },
+      "Received response",
+    );
+    return content;
   }
 
   /**
@@ -469,8 +519,9 @@ export class SessionManager {
       const reason = error instanceof Error ? error.message : String(error);
       this.logger.error({ err: error, session: ps.index }, "sendMessageStreaming failed");
 
-      if (reason.includes("Timeout") && reason.includes("session.idle")) {
+      if (this.isSessionDead(reason)) {
         sessionRecreating = true;
+        this.logger.warn({ session: ps.index, reason }, "Session dead (streaming) — recreating");
         this.recreatePoolSession(ps).catch((err) => {
           this.logger.error({ err, session: ps.index }, "Background session recreation failed");
         });
