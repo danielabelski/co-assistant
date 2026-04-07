@@ -11,10 +11,14 @@
  *  - In production, logs are emitted as newline-delimited JSON to stdout.
  *  - Subsystems obtain namespaced child loggers via `createChildLogger` so
  *    every log line carries a `component` field for easy filtering.
+ *  - **Error-level logs** (level ≥ 50) are additionally written to
+ *    `logs/error.log` in the working directory for post-mortem analysis.
  */
 
 import pino from "pino";
 import type { Logger } from "pino";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,28 +49,64 @@ function isPinoPrettyAvailable(): boolean {
 }
 
 /**
+ * Ensure the `logs/` directory exists in the working directory.
+ * Called once at module load — safe to call multiple times.
+ */
+function ensureLogDir(): string {
+  const logDir = path.join(process.cwd(), "logs");
+  try {
+    mkdirSync(logDir, { recursive: true });
+  } catch { /* ignore — dir may already exist */ }
+  return logDir;
+}
+
+/**
  * Build pino options, optionally including the pino-pretty transport when
  * running outside of production **and** pino-pretty is installed.
- * Falls back silently to standard JSON output otherwise.
+ *
+ * Additionally configures a file transport for error-level logs so they
+ * persist in `logs/error.log` for post-mortem debugging.
  */
-function buildLoggerOptions(): pino.LoggerOptions {
+function buildLoggerOptions(): pino.LoggerOptions & { transport?: pino.TransportMultiOptions | pino.TransportSingleOptions } {
   const level = resolveLogLevel();
   const isProduction = process.env.NODE_ENV === "production";
+  const hasPretty = !isProduction && isPinoPrettyAvailable();
+  const logDir = ensureLogDir();
+  const errorLogPath = path.join(logDir, "error.log");
 
-  const opts: pino.LoggerOptions = { level };
+  // Use pino's built-in transport pipeline with multiple targets:
+  // 1. stdout (all levels) — pretty-printed in dev, JSON in prod
+  // 2. error.log file (level >= 50 only) — always JSON for machine parsing
+  const targets: pino.TransportTargetOptions[] = [];
 
-  if (!isProduction && isPinoPrettyAvailable()) {
-    opts.transport = {
+  if (hasPretty) {
+    targets.push({
       target: "pino-pretty",
+      level,
       options: {
         colorize: true,
         translateTime: "SYS:HH:MM:ss",
         ignore: "pid,hostname",
       },
-    };
+    });
+  } else {
+    targets.push({
+      target: "pino/file",
+      level,
+      options: { destination: 1 }, // fd 1 = stdout
+    });
   }
 
-  return opts;
+  targets.push({
+    target: "pino/file",
+    level: "error",
+    options: { destination: errorLogPath, mkdir: true },
+  });
+
+  return {
+    level,
+    transport: { targets },
+  };
 }
 
 // ---------------------------------------------------------------------------
