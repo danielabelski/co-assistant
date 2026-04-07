@@ -238,7 +238,7 @@ export class App {
               );
             }
 
-            const response = await sessionManager.sendMessage(finalPrompt);
+            const response = await sessionManager.sendEphemeral(finalPrompt);
 
             if (!response) {
               await ctx.reply(`⚠️ Heartbeat "${event.name}" returned no response.`, replyOpts);
@@ -467,8 +467,9 @@ export class App {
     if (heartbeatInterval > 0 && heartbeatEvents.length > 0) {
       heartbeatManager.start(
         heartbeatInterval,
-        // Send heartbeat prompt to the AI session
-        async (prompt) => sessionManager.sendMessage(prompt),
+        // Use an ephemeral (disposable) session per heartbeat run — zero
+        // conversation history prevents the AI from hallucinating stale data.
+        async (prompt) => sessionManager.sendEphemeral(prompt),
         // Forward the AI's response to the user via Telegram
         async (eventName, response, extraOpts) => {
           try {

@@ -536,6 +536,69 @@ export class SessionManager {
   }
 
   // -----------------------------------------------------------------------
+  // Ephemeral sessions (heartbeats)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Send a prompt on a **disposable, single-use session** that is created
+   * fresh and destroyed immediately after the response is received.
+   *
+   * This is designed for heartbeat events that must run with zero
+   * conversation history — preventing the AI from "remembering" results
+   * from prior runs and hallucinating stale data.
+   *
+   * The ephemeral session uses the same model and tools as the main pool
+   * but shares no context with it. User chat sessions are unaffected.
+   *
+   * @param prompt  - The full prompt (personality + user context applied here).
+   * @param timeout - Timeout in ms (default: 300 000 = 5 min).
+   * @returns The assistant's response content.
+   * @throws {AIError} If the session cannot be created or the send fails.
+   */
+  async sendEphemeral(prompt: string, timeout: number = 300_000): Promise<string> {
+    const fullPrompt = this.applySystemContext(prompt);
+
+    let session: CopilotSession | null = null;
+    try {
+      const client = this.clientWrapper.getClient();
+      const sdkTools = convertTools(this.tools);
+
+      this.logger.debug("Creating ephemeral session for heartbeat");
+      session = await (client as unknown as {
+        createSession(opts: Record<string, unknown>): Promise<CopilotSession>;
+      }).createSession({
+        model: this.currentModel,
+        tools: sdkTools.length > 0 ? sdkTools : undefined,
+        onPermissionRequest: approveAll,
+      });
+
+      this.logger.debug(
+        { promptLength: fullPrompt.length, timeout },
+        "Sending message on ephemeral session",
+      );
+
+      const response = await session.sendAndWait({ prompt: fullPrompt }, timeout);
+
+      const content = response?.data?.content ?? "";
+      this.logger.debug(
+        { responseLength: content.length },
+        "Ephemeral session response received",
+      );
+      return content;
+    } catch (error: unknown) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.error({ err: error }, "sendEphemeral failed");
+      throw AIError.sendFailed(reason);
+    } finally {
+      // Always destroy the ephemeral session — it must not persist
+      if (session) {
+        try { await session.disconnect(); } catch { /* best-effort */ }
+        this.logger.debug("Ephemeral session destroyed");
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Model / tool management
   // -----------------------------------------------------------------------
 
