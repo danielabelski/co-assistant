@@ -666,6 +666,9 @@ export class SessionManager {
       }).createSession({
         model: this.currentModel,
         tools: sdkTools.length > 0 ? sdkTools : undefined,
+        // MCP servers are included so heartbeat hooks can call MCP tools.
+        // The subprocess is NOT re-spawned here — the SDK reuses the already-running
+        // process started by warmUpMcp() at startup (stdio processes are shared by config).
         mcpServers: this.mcpServers,
         onPermissionRequest: approveAll,
       });
@@ -692,6 +695,47 @@ export class SessionManager {
       if (session) {
         try { await session.disconnect(); } catch { /* best-effort */ }
         this.logger.debug("Ephemeral session destroyed");
+      }
+    }
+  }
+
+  /**
+   * Fire-and-forget MCP warm-up: creates a temporary session **with** MCP servers
+   * and sends a minimal prompt so the MCP subprocess is initialised and its tool
+   * list is cached before the first real user message arrives.
+   *
+   * Call this once after `createSession()` — it runs in the background and does
+   * not block the bot from starting. On slow environments (e.g. EC2 with EBS)
+   * this prevents the first user message from paying the ~60–80 s cold-start cost.
+   */
+  async warmUpMcp(): Promise<void> {
+    if (!this.mcpServers || Object.keys(this.mcpServers).length === 0) return;
+
+    const serverIds = Object.keys(this.mcpServers).join(", ");
+    this.logger.info({ servers: serverIds }, "MCP warm-up started");
+    const start = Date.now();
+
+    let session: CopilotSession | null = null;
+    try {
+      const client = this.clientWrapper.getClient();
+      session = await (client as unknown as {
+        createSession(opts: Record<string, unknown>): Promise<CopilotSession>;
+      }).createSession({
+        model: this.currentModel,
+        mcpServers: this.mcpServers,
+        onPermissionRequest: approveAll,
+      });
+
+      // A minimal prompt that doesn't use any tools — we just need the SDK to
+      // complete its MCP handshake (tool listing) and return.
+      await session.sendAndWait({ prompt: "ping" }, 120_000);
+
+      this.logger.info({ durationMs: Date.now() - start, servers: serverIds }, "MCP warm-up complete");
+    } catch (err) {
+      this.logger.warn({ err, durationMs: Date.now() - start }, "MCP warm-up failed — first user message may be slow");
+    } finally {
+      if (session) {
+        try { await session.disconnect(); } catch { /* best-effort */ }
       }
     }
   }

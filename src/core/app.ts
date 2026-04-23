@@ -164,6 +164,12 @@ export class App {
     console.log(`  ▸ Creating AI session pool (model: ${currentModel}, sessions: ${poolSize})…`);
     await sessionManager.createSession(currentModel, pluginTools, poolSize, mcpServers);
 
+    // Eagerly initialise MCP in the background so the first user message isn't slow.
+    // Fire-and-forget — the bot starts immediately while MCP warms up in parallel.
+    if (mcpServerCount > 0) {
+      void sessionManager.warmUpMcp();
+    }
+
     // 10. Create and launch Telegram bot
     console.log("  ▸ Connecting to Telegram…");
     const bot = createBot(config.env.TELEGRAM_BOT_TOKEN);
