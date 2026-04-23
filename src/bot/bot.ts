@@ -40,6 +40,13 @@ export interface BotInitOptions {
    * argument string.
    */
   onCommand?: (ctx: Context, command: string, args: string) => Promise<void>;
+
+  /**
+   * Optional handler invoked for Telegram voice messages.
+   * Only registered when `VOICE_ENABLED=true` in the environment.
+   * Receives the full context; the voice payload is accessed via ctx.message.voice.
+   */
+  onVoice?: (ctx: Context) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +94,7 @@ export class TelegramBot {
    * 6. Catch-all for unhandled update types
    */
   initialize(options: BotInitOptions): void {
-    const { allowedUserId, onMessage, onCommand } = options;
+    const { allowedUserId, onMessage, onCommand, onVoice } = options;
 
     // 1. Logging
     this.bot.use(createLoggingMiddleware());
@@ -151,11 +158,20 @@ export class TelegramBot {
       });
     });
 
+    // Voice message handler (optional — only registered when voice input is enabled)
+    if (onVoice) {
+      this.bot.on(message("voice"), async (ctx) => {
+        onVoice(ctx).catch((err: unknown) => {
+          this.logger.error({ err }, "Unhandled error in voice handler");
+        });
+      });
+    }
+
     // 6. Catch-all for unhandled update types
     this.bot.on("message", (ctx) => {
       this.logger.debug(
         { updateType: ctx.updateType, messageType: "non-text" },
-        "Received non-text message — ignoring",
+        "Received unsupported message type — ignoring",
       );
     });
 

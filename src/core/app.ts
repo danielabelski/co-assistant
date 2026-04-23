@@ -35,6 +35,7 @@ import { credentialManager } from "../plugins/credentials.js";
 import { createBot, type TelegramBot } from "../bot/bot.js";
 import { Markup, type Context } from "telegraf";
 import { createMessageHandler, splitMessage, safeSendMarkdown } from "../bot/handlers/message.js";
+import { createVoiceHandler } from "../bot/handlers/voice.js";
 import { HeartbeatManager } from "./heartbeat.js";
 import { GarbageCollector } from "./gc.js";
 import type { PluginManager } from "../plugins/manager.js";
@@ -178,6 +179,26 @@ export class App {
       sessionManager,
       conversationRepo,
     });
+
+    // Voice input (optional — enabled via VOICE_ENABLED=true in .env)
+    const voiceEnabled = config.env.VOICE_ENABLED === "true";
+    let voiceHandler: ((ctx: Context) => Promise<void>) | undefined;
+
+    if (voiceEnabled) {
+      if (!config.env.WHISPER_BINARY_PATH || !config.env.WHISPER_MODEL_PATH) {
+        this.logger.warn(
+          "VOICE_ENABLED=true but WHISPER_BINARY_PATH or WHISPER_MODEL_PATH not set — voice input disabled"
+        );
+      } else {
+        voiceHandler = createVoiceHandler({
+          messageHandler: rawMessageHandler,
+          whisperBinaryPath: config.env.WHISPER_BINARY_PATH,
+          whisperModelPath: config.env.WHISPER_MODEL_PATH,
+          maxDurationSeconds: parseInt(config.env.VOICE_MAX_DURATION_SECONDS ?? "15", 10),
+        });
+        console.log("  ▸ Voice input enabled (whisper.cpp / tiny.en)");
+      }
+    }
 
     // Wrap the message handler with debug console logging
     const messageHandler = async (ctx: Context, text: string): Promise<void> => {
@@ -486,6 +507,7 @@ export class App {
       allowedUserId: Number(config.env.TELEGRAM_USER_ID),
       onMessage: messageHandler,
       onCommand: commandHandler,
+      onVoice: voiceHandler,
     });
 
     // Register inline keyboard callback handler for self-update action

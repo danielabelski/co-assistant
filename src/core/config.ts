@@ -47,6 +47,14 @@ export const EnvConfigSchema = z.object({
   DEFAULT_MODEL: z.string().default("gpt-4.1"),
   HEARTBEAT_INTERVAL_MINUTES: z.string().default("0"),
   AI_SESSION_POOL_SIZE: z.string().default("3"),
+  /** Enable offline voice-to-text transcription via whisper.cpp. */
+  VOICE_ENABLED: z.string().optional(),
+  /** Absolute path to the whisper.cpp CLI binary (e.g. ~/.co-assistant/whisper.cpp/build/bin/whisper-cli). */
+  WHISPER_BINARY_PATH: z.string().optional(),
+  /** Absolute path to the whisper.cpp GGML model file (e.g. ggml-tiny.en.bin). */
+  WHISPER_MODEL_PATH: z.string().optional(),
+  /** Maximum voice message duration in seconds before rejecting (default: "15"). */
+  VOICE_MAX_DURATION_SECONDS: z.string().default("15"),
 });
 
 /** Inferred type for environment configuration. */

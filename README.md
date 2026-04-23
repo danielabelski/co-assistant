@@ -317,6 +317,58 @@ All configured via `.env` (the setup wizard handles this):
 
 ---
 
+## Voice Input
+
+Send a Telegram voice note and co-assistant transcribes it offline using [whisper.cpp](https://github.com/ggerganov/whisper.cpp), then feeds the resulting text to the AI — no cloud speech API required.
+
+### Requirements
+
+| Dependency | How to install |
+|------------|----------------|
+| `ffmpeg` | System package — `apt install ffmpeg` / `brew install ffmpeg` |
+| `cmake` | System package — `apt install cmake` / `brew install cmake` |
+| `whisper.cpp` | Built locally during setup (see below) |
+
+### Setup
+
+Run the interactive setup wizard and enable voice when prompted:
+
+```bash
+co-assistant setup
+```
+
+The wizard clones and builds whisper.cpp, downloads the `ggml-tiny.en.bin` model, and writes the required env vars to your `.env`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VOICE_ENABLED` | `false` | Enable voice input feature |
+| `WHISPER_BINARY_PATH` | — | Path to the whisper.cpp CLI binary |
+| `WHISPER_MODEL_PATH` | — | Path to `ggml-tiny.en.bin` model file |
+| `VOICE_MAX_DURATION_SECONDS` | `15` | Maximum voice message duration accepted |
+
+### Manual Install
+
+If you prefer to build whisper.cpp yourself rather than using the setup wizard:
+
+```bash
+git clone --depth 1 https://github.com/ggerganov/whisper.cpp ~/.co-assistant/whisper.cpp
+cd ~/.co-assistant/whisper.cpp
+cmake -B build && cmake --build build --config Release
+bash models/download-ggml-model.sh tiny.en
+```
+
+Then set `WHISPER_BINARY_PATH` and `WHISPER_MODEL_PATH` in your `.env` to the paths of the built binary and downloaded model.
+
+### Limitations
+
+- **English only** — uses the `tiny.en` model
+- **≤15 seconds** by default (configurable via `VOICE_MAX_DURATION_SECONDS`)
+- **CPU-only** transcription (~1–4 s latency depending on hardware)
+
+---
+
 ## CLI Reference
 
 | Command | Description |

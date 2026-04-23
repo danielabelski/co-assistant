@@ -49,3 +49,6 @@ logs/
 # Coverage & test output
 coverage/
 .nyc_output/
+
+# Voice processing temp files
+.voice-temp/

@@ -14,7 +14,10 @@
  */
 
 import { Command } from "commander";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   promptText,
   promptSecret,
@@ -407,6 +410,128 @@ async function setupPlugin(manifest: PluginManifest): Promise<void> {
  *
  * All environment values are written to `.env`.
  */
+// ---------------------------------------------------------------------------
+// Voice input setup
+// ---------------------------------------------------------------------------
+
+/**
+ * Clone, build, and download a tiny.en model for whisper.cpp.
+ * Installs into `~/.co-assistant/whisper.cpp`.
+ */
+async function autoInstallWhisper(): Promise<{
+  binaryPath: string;
+  modelPath: string;
+}> {
+  const installDir = path.join(
+    os.homedir(),
+    ".co-assistant",
+    "whisper.cpp",
+  );
+
+  if (!existsSync(installDir)) {
+    console.log("  ▸ Cloning whisper.cpp…");
+    execSync(
+      `git clone --depth 1 https://github.com/ggerganov/whisper.cpp "${installDir}"`,
+      { stdio: "inherit" },
+    );
+  }
+
+  console.log("  ▸ Building whisper.cpp (this may take a few minutes)…");
+  execSync(`cmake -B build && cmake --build build --config Release`, {
+    cwd: installDir,
+    stdio: "inherit",
+  });
+
+  const modelPath = path.join(installDir, "models", "ggml-tiny.en.bin");
+  if (!existsSync(modelPath)) {
+    console.log("  ▸ Downloading tiny.en model…");
+    execSync(`bash models/download-ggml-model.sh tiny.en`, {
+      cwd: installDir,
+      stdio: "inherit",
+    });
+  }
+
+  const binaryPath = existsSync(
+    path.join(installDir, "build", "bin", "whisper-cli"),
+  )
+    ? path.join(installDir, "build", "bin", "whisper-cli")
+    : path.join(installDir, "build", "bin", "main");
+
+  return { binaryPath, modelPath };
+}
+
+/**
+ * Interactive voice-input configuration step.
+ * Checks for ffmpeg, resolves whisper.cpp binary and model paths,
+ * and writes VOICE_* variables into the shared `vars` map.
+ */
+async function setupVoiceInput(vars: Map<string, string>): Promise<void> {
+  console.log("\nStep 5: Voice Input (optional)");
+
+  const enable = await promptConfirm(
+    "Enable voice input? (requires ffmpeg and whisper.cpp)",
+    false,
+  );
+  if (!enable) {
+    vars.set("VOICE_ENABLED", "false");
+    return;
+  }
+
+  // Check ffmpeg
+  try {
+    execSync("ffmpeg -version", { stdio: "pipe" });
+  } catch {
+    console.log(
+      "\n  ✖ ffmpeg not found. Install it with: sudo apt install ffmpeg",
+    );
+    console.log("  Then re-run setup to enable voice input.");
+    vars.set("VOICE_ENABLED", "false");
+    return;
+  }
+
+  let binaryPath = "";
+  let modelPath = "";
+  let autoInstalled: { binaryPath: string; modelPath: string } | null = null;
+
+  // Whisper binary path
+  const binaryInput = await promptText(
+    "Path to whisper.cpp binary (leave blank to auto-install to ~/.co-assistant/whisper.cpp)",
+  );
+
+  if (!binaryInput.trim()) {
+    try {
+      autoInstalled = await autoInstallWhisper();
+      binaryPath = autoInstalled.binaryPath;
+      modelPath = autoInstalled.modelPath;
+    } catch (err) {
+      console.log(`\n  ✖ Auto-install failed: ${(err as Error).message}`);
+      console.log("  Falling back to manual path entry.");
+      binaryPath = await promptText("Path to whisper.cpp binary");
+    }
+  } else {
+    binaryPath = path.resolve(binaryInput.replace(/^~/, os.homedir()));
+  }
+
+  // Model path
+  const modelInput = await promptText(
+    "Path to ggml-tiny.en.bin model (leave blank to use auto-installed model)",
+  );
+
+  if (!modelInput.trim()) {
+    // Keep modelPath from auto-install if available; otherwise prompt
+    if (!modelPath) {
+      modelPath = await promptText("Path to ggml-tiny.en.bin model");
+    }
+  } else {
+    modelPath = path.resolve(modelInput.replace(/^~/, os.homedir()));
+  }
+
+  vars.set("VOICE_ENABLED", "true");
+  vars.set("WHISPER_BINARY_PATH", binaryPath);
+  vars.set("WHISPER_MODEL_PATH", modelPath);
+  vars.set("VOICE_MAX_DURATION_SECONDS", "15");
+}
+
 async function runGlobalSetup(): Promise<void> {
   console.log("\n🔧 Co-Assistant Setup Wizard");
   console.log("────────────────────────────\n");
@@ -513,6 +638,8 @@ async function runGlobalSetup(): Promise<void> {
     currentInterval,
   );
   envVars.set("HEARTBEAT_INTERVAL_MINUTES", interval);
+
+  await setupVoiceInput(envVars);
 
   writeEnvFile(envVars);
   console.log("\n✓ Configuration saved to .env");
