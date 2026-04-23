@@ -38,6 +38,7 @@ import { createMessageHandler, splitMessage, safeSendMarkdown } from "../bot/han
 import { HeartbeatManager } from "./heartbeat.js";
 import { GarbageCollector } from "./gc.js";
 import type { PluginManager } from "../plugins/manager.js";
+import { toSdkMcpServers } from "../mcp/index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -152,9 +153,16 @@ export class App {
     const pluginTools = pluginManager.getAllTools();
     const poolSize = Math.max(1, parseInt(config.env.AI_SESSION_POOL_SIZE || "3", 10));
 
-    // 9. Create AI session pool with model and plugin tools
+    // Resolve enabled MCP servers from config (strips metadata, expands ${VAR})
+    const mcpServers = toSdkMcpServers(config.app.mcp);
+    const mcpServerCount = mcpServers ? Object.keys(mcpServers).length : 0;
+    if (mcpServerCount > 0) {
+      console.log(`  ▸ MCP servers enabled: ${Object.keys(mcpServers!).join(", ")}`);
+    }
+
+    // 9. Create AI session pool with model, plugin tools, and MCP servers
     console.log(`  ▸ Creating AI session pool (model: ${currentModel}, sessions: ${poolSize})…`);
-    await sessionManager.createSession(currentModel, pluginTools, poolSize);
+    await sessionManager.createSession(currentModel, pluginTools, poolSize, mcpServers);
 
     // 10. Create and launch Telegram bot
     console.log("  ▸ Connecting to Telegram…");
@@ -345,12 +353,41 @@ export class App {
             "🤖 *Co-Assistant Commands*\n\n" +
             "/heartbeat \\[name\\] — Run heartbeat event\\(s\\)\n" +
             "/hb \\[name\\] — Shorthand for /heartbeat\n" +
+            "/mcp — List configured MCP servers\n" +
             "/update — Check for updates \\(tap to self\\-update\\)\n" +
             "/help — Show this message\n\n" +
             "Or just send a message to chat with the AI\\.",
             { parse_mode: "MarkdownV2", ...replyOpts } as Record<string, unknown>,
           );
           break;
+
+        case "mcp": {
+          const mcpConfig = config.app.mcp;
+          const servers = mcpConfig?.servers ?? {};
+          const serverEntries = Object.entries(servers);
+
+          if (serverEntries.length === 0) {
+            await ctx.reply(
+              "🔌 No MCP servers configured.\n\nAdd one with: co-assistant mcp add",
+              replyOpts,
+            );
+            break;
+          }
+
+          const lines = serverEntries.map(([id, srv]) => {
+            const statusIcon = srv.enabled ? "✅" : "❌";
+            const typeLabel = srv.type === "local" || srv.type === "stdio"
+              ? `stdio: ${srv.command}`
+              : `${srv.type}: ${srv.url}`;
+            return `${statusIcon} *${id}* — ${srv.name}\n   ${typeLabel}`;
+          });
+
+          await safeSendMarkdown(
+            (text, extra) => ctx.reply(text, { ...extra, ...replyOpts }),
+            `🔌 *MCP Servers* (${serverEntries.length} configured)\n\n${lines.join("\n\n")}`,
+          );
+          break;
+        }
 
         default:
           // Unknown command — fall through to message handler
@@ -459,6 +496,9 @@ export class App {
     console.log(`  Model:   ${currentModel}`);
     console.log(`  Sessions: ${poolSize} (parallel processing)`);
     console.log(`  Plugins: ${pluginNames} (${pluginCount} active)`);
+    if (mcpServerCount > 0) {
+      console.log(`  MCP:     ${Object.keys(mcpServers!).join(", ")} (${mcpServerCount} server${mcpServerCount === 1 ? "" : "s"})`);
+    }
 
     // 12. Start heartbeat scheduler
     const heartbeatInterval = parseInt(config.env.HEARTBEAT_INTERVAL_MINUTES || "0", 10);

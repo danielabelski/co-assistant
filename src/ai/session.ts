@@ -24,6 +24,7 @@ import { createChildLogger } from "../core/logger.js";
 import { AIError } from "../core/errors.js";
 import { CopilotClientWrapper, copilotClient } from "./client.js";
 import type { ToolDefinition } from "../plugins/types.js";
+import type { SdkMcpServers } from "../mcp/types.js";
 
 const logger = createChildLogger("ai:session");
 
@@ -102,6 +103,8 @@ export class SessionManager {
 
   private currentModel: string = "";
   private tools: ToolDefinition[] = [];
+  /** MCP servers passed to every `createSession()` call. */
+  private mcpServers: SdkMcpServers | undefined = undefined;
   private logger: Logger;
 
   /**
@@ -243,6 +246,7 @@ export class SessionManager {
       }).createSession({
         model: this.currentModel,
         tools: sdkTools.length > 0 ? sdkTools : undefined,
+        mcpServers: this.mcpServers,
         onPermissionRequest: approveAll,
       });
 
@@ -269,12 +273,18 @@ export class SessionManager {
    * fails to create, all successful ones are cleaned up and the error
    * propagates.
    *
-   * @param model    - Model identifier (e.g. `"gpt-5"`, `"claude-sonnet-4.5"`).
-   * @param tools    - Optional array of tool definitions to register.
-   * @param poolSize - Number of parallel sessions (default: 3).
+   * @param model      - Model identifier (e.g. `"gpt-5"`, `"claude-sonnet-4.5"`).
+   * @param tools      - Optional array of tool definitions to register.
+   * @param poolSize   - Number of parallel sessions (default: 3).
+   * @param mcpServers - Optional MCP server map passed directly to the SDK.
    * @throws {AIError} If session creation fails.
    */
-  async createSession(model: string, tools?: ToolDefinition[], poolSize?: number): Promise<void> {
+  async createSession(
+    model: string,
+    tools?: ToolDefinition[],
+    poolSize?: number,
+    mcpServers?: SdkMcpServers,
+  ): Promise<void> {
     if (this.pool.length > 0) {
       this.logger.warn("Session pool already exists — closing before re-creating");
       await this.closeSession();
@@ -282,13 +292,14 @@ export class SessionManager {
 
     if (tools) this.tools = tools;
     if (poolSize !== undefined && poolSize > 0) this.poolSize = poolSize;
+    if (mcpServers !== undefined) this.mcpServers = mcpServers;
 
     try {
       const client = this.clientWrapper.getClient();
       const sdkTools = convertTools(this.tools);
 
       this.logger.info(
-        { model, toolCount: sdkTools.length, poolSize: this.poolSize },
+        { model, toolCount: sdkTools.length, mcpServerCount: Object.keys(this.mcpServers ?? {}).length, poolSize: this.poolSize },
         "Creating session pool",
       );
 
@@ -300,6 +311,7 @@ export class SessionManager {
           }).createSession({
             model,
             tools: sdkTools.length > 0 ? sdkTools : undefined,
+            mcpServers: this.mcpServers,
             onPermissionRequest: approveAll,
           });
           this.logger.debug({ index: i }, "Pool session created");
@@ -569,6 +581,7 @@ export class SessionManager {
       }).createSession({
         model: this.currentModel,
         tools: sdkTools.length > 0 ? sdkTools : undefined,
+        mcpServers: this.mcpServers,
         onPermissionRequest: approveAll,
       });
 

@@ -15,6 +15,7 @@ import { registerPluginCommand } from "./commands/plugin.js";
 import { registerModelCommand } from "./commands/model.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerHeartbeatCommand } from "./commands/heartbeat.js";
+import { registerMcpCommand } from "./commands/mcp.js";
 
 // Suppress pino logs in CLI mode unless explicitly overridden.
 if (!process.env.LOG_LEVEL) {
@@ -36,6 +37,7 @@ registerSetupCommand(program);
 registerPluginCommand(program);
 registerModelCommand(program);
 registerHeartbeatCommand(program);
+registerMcpCommand(program);
 registerStatusCommand(program);
 
 program.parse(process.argv);

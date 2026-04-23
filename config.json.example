@@ -17,6 +17,30 @@
       }
     }
   },
+  "mcp": {
+    "servers": {
+      "filesystem": {
+        "name": "Filesystem",
+        "type": "local",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+        "tools": ["*"],
+        "timeout": 30000,
+        "enabled": false
+      },
+      "github": {
+        "name": "GitHub MCP",
+        "type": "http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "headers": {
+          "Authorization": "Bearer ${GITHUB_TOKEN}"
+        },
+        "tools": ["*"],
+        "timeout": 30000,
+        "enabled": false
+      }
+    }
+  },
   "bot": {
     "maxMessageLength": 4096,
     "typingIndicator": true

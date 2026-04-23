@@ -356,6 +356,7 @@ All configured via `.env` (the setup wizard handles this):
 | `/status` | Show bot status |
 | `/heartbeat [name]` | Run heartbeat event(s) on demand |
 | `/hb [name]` | Shorthand for `/heartbeat` |
+| `/mcp` | List configured MCP servers and their status |
 
 Anything else you type is a conversation with the AI.
 
@@ -496,6 +497,35 @@ export default function createPlugin(): CoAssistantPlugin {
 Tool names are automatically prefixed with the plugin ID (e.g., `my-plugin_do_something`) to prevent collisions. Plugins run in a sandbox — failures are isolated and auto-disabled after 5 consecutive errors.
 
 > 📖 See [docs/plugin-development.md](docs/plugin-development.md) for the full guide.
+
+---
+
+## MCP Servers
+
+Co-Assistant supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) natively via the GitHub Copilot SDK. MCP servers extend the AI with external tools over **stdio** (local process) or **HTTP/SSE** (remote service).
+
+```bash
+# Add a server (interactive wizard)
+co-assistant mcp add
+
+# List all configured servers
+co-assistant mcp list
+
+# Enable / disable / remove
+co-assistant mcp enable <id>
+co-assistant mcp disable <id>
+co-assistant mcp remove <id>
+```
+
+Configure manually in `config.json` under the `mcp.servers` key — see `config.json.example` for a template.
+
+Environment variables can be injected into headers/env values using `${VAR_NAME}` syntax:
+
+```json
+"headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+```
+
+> 📖 See [docs/mcp.md](docs/mcp.md) for the full guide, popular servers, and troubleshooting.
 
 ---
 

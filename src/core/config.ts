@@ -13,6 +13,7 @@
 import { z } from "zod";
 import dotenv from "dotenv";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { McpConfigSchema } from "../mcp/types.js";
 
 // ---------------------------------------------------------------------------
 // Error class — fallback until core/errors is fully implemented
@@ -115,10 +116,19 @@ export const AppConfigSchema = z.object({
   bot: BotConfigSchema.default({ maxMessageLength: 4096, typingIndicator: true }),
   ai: AIConfigSchema.default({ maxRetries: 3, sessionTimeout: 3600000 }),
   pluginHealth: PluginHealthConfigSchema.default({ maxFailures: 5, checkInterval: 60000 }),
+  /**
+   * MCP server definitions.  Optional — if absent no MCP servers are
+   * configured and existing behaviour is unchanged.
+   */
+  mcp: McpConfigSchema.optional(),
 });
 
 /** Inferred type for the full application configuration. */
 export type AppConfig = z.infer<typeof AppConfigSchema>;
+
+// Re-export MCP types so callers can import everything from core/config
+export type { McpConfig } from "../mcp/types.js";
+export { McpConfigSchema } from "../mcp/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
